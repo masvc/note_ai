@@ -3,8 +3,8 @@ name: 🚀 Note.com自動投稿システム
 
 on:
   schedule:
-    # 中3日実行（月曜・木曜の朝8時JST）
-    - cron: "59 22 * * 1,4" # UTC 22:59 = JST 7:59 → JST 8:00
+    # 月曜・木曜の朝8時JST = 日曜・水曜の23時UTC
+    - cron: "0 23 * * 0,3" # 日曜23:00UTC=月曜8:00JST, 水曜23:00UTC=木曜8:00JST
   workflow_dispatch: # 手動実行も可能
 
 # 同時実行防止（コンフリクト対策）
