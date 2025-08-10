@@ -4,37 +4,37 @@ name: 🚀 Note.com自動投稿システム
 on:
   schedule:
     # 中3日実行（月曜・木曜の朝8時JST）
-    - cron: "59 22 * * 0,3"  # UTC 22:59 = JST 7:59 → JST 8:00
-  workflow_dispatch:        # 手動実行も可能
+    - cron: "59 22 * * 0,3" # UTC 22:59 = JST 7:59 → JST 8:00
+  workflow_dispatch: # 手動実行も可能
 
 # 同時実行防止（コンフリクト対策）
 concurrency:
   group: note-auto-post
-  cancel-in-progress: false  # 実行中のジョブはキャンセルしない
+  cancel-in-progress: false # 実行中のジョブはキャンセルしない
 
 jobs:
   auto-post-note:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    
+
     steps:
       - name: 📥 チェックアウト
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-        
+
       - name: 🐍 Python環境セットアップ
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
-          cache: 'pip'
-          
+          python-version: "3.11"
+          cache: "pip"
+
       - name: 📦 依存関係インストール
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
           playwright install chromium
-          
+
       - name: 📝 記事生成（Peaky Media RSS）
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -42,17 +42,17 @@ jobs:
           echo "🕐 $(TZ='Asia/Tokyo' date +'%Y-%m-%d %H:%M:%S JST') - 記事生成開始"
           python create.py
           echo "✅ 記事生成完了"
-          
+
       - name: 📄 生成記事をリポジトリにコミット（安全版）
         run: |
           # Git設定
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action Bot"
-          
+
           # 最新のリモート状態を取得（コンフリクト回避）
           echo "🔄 最新状態を取得中..."
           git fetch origin main
-          
+
           # リモートに変更がある場合はrebase
           if ! git diff --quiet HEAD origin/main; then
             echo "🔄 リモートに新しい変更があります。rebase実行中..."
@@ -62,11 +62,11 @@ jobs:
               exit 1
             }
           fi
-          
+
           # 生成された記事ファイルを確認
           TODAY=$(TZ='Asia/Tokyo' date +'%Y%m%d')
           ARTICLE_FILE="articles/${TODAY}.md"
-          
+
           if [ -f "$ARTICLE_FILE" ]; then
             echo "📄 生成された記事: $ARTICLE_FILE"
             echo "📊 記事サイズ: $(wc -c < "$ARTICLE_FILE") bytes"
@@ -96,12 +96,11 @@ jobs:
             if git diff --staged --quiet; then
               echo "📝 コミットする変更はありません"
             else
-              # コミット実行
-              git commit -m "📝 自動生成記事: ${TODAY}
-
-📄 ${TITLE}...
-🤖 自動実行: $(TZ='Asia/Tokyo' date +'%Y-%m-%d %H:%M:%S JST')
-📊 サイズ: $(wc -c < "$ARTICLE_FILE") bytes"
+              # コミット実行（安全なメッセージ形式）
+              git commit -m "Auto-generated article: ${TODAY}" \
+                         -m "Title: ${TITLE}..." \
+                         -m "Generated: $(TZ='Asia/Tokyo' date +'%Y-%m-%d %H:%M:%S JST')" \
+                         -m "Size: $(wc -c < "$ARTICLE_FILE") bytes"
               
               echo "✅ 記事をローカルにコミット完了"
             fi
@@ -109,22 +108,22 @@ jobs:
             echo "❌ 記事ファイル $ARTICLE_FILE が見つかりません"
             exit 1
           fi
-          
+
       - name: ⏳ 生成完了待機
         run: |
           echo "📝 記事生成後の待機時間..."
           sleep 30
-          
+
       - name: 🚀 Note.com自動投稿
         env:
           NOTE_EMAIL: ${{ secrets.NOTE_EMAIL }}
           NOTE_PASSWORD: ${{ secrets.NOTE_PASSWORD }}
-          HEADLESS: 'true'
+          HEADLESS: "true"
         run: |
           echo "🕐 $(TZ='Asia/Tokyo' date +'%Y-%m-%d %H:%M:%S JST') - 投稿開始"
           python main.py
           echo "✅ 投稿完了"
-          
+
       - name: 📤 変更をプッシュ（安全版・リトライ付き）
         run: |
           # プッシュする変更があるかチェック
@@ -132,13 +131,13 @@ jobs:
             echo "📝 プッシュする変更はありません"
             exit 0
           fi
-          
+
           echo "📤 記事をリポジトリにプッシュ中..."
-          
+
           # リトライ機能付きプッシュ（最大3回）
           MAX_RETRY=3
           RETRY_COUNT=0
-          
+
           while [ $RETRY_COUNT -lt $MAX_RETRY ]; do
             echo "🚀 プッシュ試行 $((RETRY_COUNT + 1))/$MAX_RETRY"
             
@@ -169,7 +168,7 @@ jobs:
               fi
             fi
           done
-          
+
       - name: 📸 エラー時のスクリーンショット保存
         if: failure()
         uses: actions/upload-artifact@v4
