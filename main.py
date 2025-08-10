@@ -2,11 +2,13 @@
 """
 Note.com自動投稿システム（完全版）
 投稿機能を実装し、タイトル・本文・アイキャッチ設定・公開まで自動化
+キーワードベースアイキャッチ検索対応（検索アイコンクリック対応）
 """
 
 import os
 import asyncio
 import re
+import requests
 from datetime import datetime
 from playwright.async_api import async_playwright
 from dotenv import load_dotenv
@@ -130,7 +132,7 @@ class NoteAutoPoster:
             return False
 
     async def create_and_publish_article(self, title, content):
-        """記事作成・投稿処理（完全実装版）"""
+        """記事作成・投稿処理（キーワードベースアイキャッチ対応）"""
         print("📝 記事作成・投稿開始...")
         print(f"タイトル: {title}")
         print(f"内容: {content[:100]}...")
@@ -208,13 +210,14 @@ class NoteAutoPoster:
             
             await self.page.wait_for_timeout(1000)
             
-            # 4. アイキャッチ設定
+            # 4. アイキャッチ設定（キーワードベース）
             print("🖼️ アイキャッチ設定開始...")
-            await self._set_eyecatch_image(title)
+            await self.set_eyecatch_image(title, content)
             
             # 5. 公開に進む
             print("📢 公開処理開始...")
-            await self.page.wait_for_timeout(5000)  # アイキャッチ保存完了を十分に待つ
+            print("⏳ アイキャッチ設定完了を確実に待機してから公開に進みます...")
+            await self.page.wait_for_timeout(8000)  # アイキャッチ保存完了を十分に待つ（延長）
             
             # 公開処理をリトライ機能付きで実行
             return await self._publish_with_retry()
@@ -227,251 +230,16 @@ class NoteAutoPoster:
             except:
                 pass
             return False
-    async def _publish_with_retry(self):
-        """リトライ機能付き公開処理"""
-        max_retry = 3
-        
-        for attempt in range(max_retry):
-            print(f"📢 公開処理試行 {attempt + 1}/{max_retry}")
-            
-            try:
-                # 現在のページを確認
-                current_url = self.page.url
-                print(f"🌐 公開前のURL: {current_url}")
-                
-                # 公開ボタンをクリック
-                publish_success = await self._click_publish_button()
-                
-                if not publish_success:
-                    print(f"⚠️ 公開ボタンクリック失敗 (試行 {attempt + 1})")
-                    continue
-                
-                # 公開ボタンクリック後の処理を待機
-                print("⏳ 公開処理を待機中...")
-                await self.page.wait_for_timeout(3000)
-                
-                # エラーダイアログをチェック
-                error_handled = await self._handle_publish_error()
-                
-                if error_handled:
-                    print("⚠️ エラーが発生しました。リトライします...")
-                    await self.page.wait_for_timeout(2000)
-                    continue
-                
-                # エラーがない場合は次のステップに進む
-                return await self._complete_publishing()
-                
-            except Exception as e:
-                print(f"⚠️ 公開処理エラー (試行 {attempt + 1}): {e}")
-                if attempt < max_retry - 1:
-                    await self.page.wait_for_timeout(3000)
-                    continue
-                else:
-                    return False
-        
-        print("❌ 公開処理が最大リトライ回数に達しました")
-        return False
 
-    async def _click_publish_button(self):
-        """公開ボタンクリック処理"""
-        publish_button_selectors = [
-            'span:has-text("公開に進む")',
-            'button:has-text("公開に進む")',
-            'span:has-text("公開")',
-            'button:has-text("公開")',
-            '[data-testid="publish-button"]'
-        ]
-        
-        for selector in publish_button_selectors:
-            try:
-                publish_buttons = self.page.locator(selector)
-                count = await publish_buttons.count()
-                print(f"📢 「{selector}」で見つかった公開ボタン数: {count}")
-                
-                if count > 0:
-                    publish_button = publish_buttons.first
-                    if await publish_button.is_visible():
-                        await publish_button.click()
-                        print(f"✅ 公開ボタンクリック完了: {selector}")
-                        return True
-                    else:
-                        print(f"📢 公開ボタンは存在するが見えません: {selector}")
-                        
-            except Exception as e:
-                print(f"⚠️ 公開ボタン試行失敗: {selector} - {e}")
-                continue
-        
-        # キーボードショートカットを試す
-        print("⚠️ 公開ボタンが見つかりません。キーボードショートカットを試します...")
+    async def set_eyecatch_image(self, title, content):
+        """アイキャッチ画像設定（シンプルキーワード抽出版）"""
         try:
-            await self.page.keyboard.press('Meta+Enter')  # Mac用の公開ショートカット
-            print("✅ キーボードショートカットで公開を試行")
-            return True
-        except:
-            print("❌ 公開処理に失敗しました")
-            return False
-
-    async def _handle_publish_error(self):
-        """公開エラーダイアログの処理"""
-        try:
-            # エラーダイアログの検出
-            error_dialog_selectors = [
-                ':has-text("タイトル、本文を入力してください")',
-                ':has-text("入力してください")',
-                '.error-dialog',
-                '[role="dialog"]',
-                '.modal:has-text("エラー")'
-            ]
+            print("🖼️ アイキャッチ画像設定開始...")
             
-            for selector in error_dialog_selectors:
-                try:
-                    error_dialog = self.page.locator(selector).first
-                    if await error_dialog.is_visible():
-                        print(f"🚨 エラーダイアログを検出: {selector}")
-                        
-                        # エラーメッセージを取得
-                        try:
-                            error_text = await error_dialog.text_content()
-                            print(f"🚨 エラー内容: {error_text}")
-                        except:
-                            pass
-                        
-                        # 「閉じる」ボタンを探してクリック
-                        close_success = await self._close_error_dialog()
-                        
-                        if close_success:
-                            print("✅ エラーダイアログを閉じました")
-                            return True
-                        else:
-                            print("⚠️ エラーダイアログを閉じることができませんでした")
-                            return True  # エラーがあることは確実なのでリトライ
-                            
-                except Exception as e:
-                    print(f"⚠️ エラーダイアログ検出失敗: {selector} - {e}")
-                    continue
+            # シンプルなキーワード抽出（Claude API不使用）
+            keyword = self._extract_keyword_simple(title, content)
+            print(f"🔍 アイキャッチ検索キーワード: 「{keyword}」")
             
-            # エラーダイアログが見つからない場合
-            return False
-            
-        except Exception as e:
-            print(f"⚠️ エラーハンドリング中にエラー: {e}")
-            return False
-
-    async def _close_error_dialog(self):
-        """エラーダイアログの「閉じる」ボタンをクリック"""
-        close_button_selectors = [
-            'button:has-text("閉じる")',
-            'span:has-text("閉じる")',
-            '[aria-label="閉じる"]',
-            'button[aria-label="Close"]',
-            '.close-button',
-            'button:has-text("×")',
-            'button:has-text("✕")'
-        ]
-        
-        for selector in close_button_selectors:
-            try:
-                close_button = self.page.locator(selector).first
-                if await close_button.is_visible():
-                    await close_button.click()
-                    print(f"✅ 閉じるボタンクリック完了: {selector}")
-                    await self.page.wait_for_timeout(1000)
-                    return True
-                    
-            except Exception as e:
-                print(f"⚠️ 閉じるボタン試行失敗: {selector} - {e}")
-                continue
-        
-        # ESCキーを試す
-        try:
-            await self.page.keyboard.press('Escape')
-            print("✅ ESCキーでダイアログを閉じました")
-            return True
-        except:
-            print("⚠️ ESCキーでの閉じる操作に失敗")
-            return False
-
-    async def _complete_publishing(self):
-        """投稿完了処理"""
-        try:
-            # 投稿状況を確認
-            print("🔍 投稿状況を確認中...")
-            
-            # 現在のURLをチェック
-            updated_url = self.page.url
-            print(f"🌐 公開後のURL: {updated_url}")
-            
-            # 追加の投稿ボタンがある場合はクリック
-            final_publish_selectors = [
-                'span:has-text("投稿する")',
-                'button:has-text("投稿する")',
-                'span:has-text("投稿")',
-                'button:has-text("投稿")',
-                '[data-testid="final-publish"]',
-                'button[type="submit"]'
-            ]
-            
-            final_publish_found = False
-            for selector in final_publish_selectors:
-                try:
-                    final_buttons = self.page.locator(selector)
-                    count = await final_buttons.count()
-                    print(f"📤 「{selector}」で見つかった最終投稿ボタン数: {count}")
-                    
-                    if count > 0:
-                        final_button = final_buttons.first
-                        if await final_button.is_visible():
-                            await final_button.click()
-                            final_publish_found = True
-                            print(f"✅ 最終投稿ボタンクリック完了: {selector}")
-                            await self.page.wait_for_timeout(3000)
-                            break
-                            
-                except Exception as e:
-                    print(f"⚠️ 最終投稿ボタン試行失敗: {selector} - {e}")
-                    continue
-            
-            if not final_publish_found:
-                print("💡 最終投稿ボタンが見つかりません。記事が既に投稿された可能性があります。")
-            
-            # 投稿完了確認
-            print("⏳ 投稿完了を最終確認中...")
-            await self.page.wait_for_timeout(5000)
-            
-            # 投稿完了を確認
-            final_url = self.page.url
-            page_title = await self.page.title()
-            print(f"🌐 最終URL: {final_url}")
-            print(f"📄 最終ページタイトル: {page_title}")
-            
-            # 成功の判定（より緩い基準）
-            success_indicators = [
-                "note.com/masvc_" in final_url,
-                "publish" in final_url,
-                "/edit" not in final_url,
-                "投稿" in page_title,
-                "公開" in page_title
-            ]
-            
-            is_success = any(success_indicators)
-            
-            if is_success:
-                print("✅ 記事投稿完了！")
-            else:
-                print("✅ 投稿処理は完了しました（確認のため手動でチェックをお勧めします）")
-            
-            return True  # 処理完了として扱う
-            
-        except Exception as e:
-            print(f"❌ 投稿完了処理エラー: {e}")
-            return False
-
-
-    async def _set_eyecatch_image(self, title):
-        """アイキャッチ画像設定"""
-        print("🖼️ アイキャッチ画像設定中...")
-        
-        try:
             # 1. アイキャッチ設定ボタンをクリック
             eyecatch_button_selectors = [
                 'button[aria-label="画像を追加"]',
@@ -535,137 +303,88 @@ class NoteAutoPoster:
                     print(f"⚠️ 「記事にあう画像を選ぶ」試行失敗: {selector} - {e}")
                     continue
             
-            # 別のアプローチ：画像アイコンのあるボタンを探す
-            if not select_clicked:
-                print("🔍 画像アイコン付きボタンを探します...")
-                try:
-                    # 画像アイコンが含まれているボタンを探す
-                    image_icon_buttons = self.page.locator('button:has(svg[data-src="/icons/image.svg"]), div:has(svg[data-src="/icons/image.svg"])')
-                    count = await image_icon_buttons.count()
-                    print(f"🔍 画像アイコンボタン数: {count}")
-                    
-                    for i in range(count):
-                        button = image_icon_buttons.nth(i)
-                        if await button.is_visible():
-                            # ボタンのテキストを確認
-                            text_content = await button.text_content()
-                            print(f"🔍 ボタンテキスト: {text_content}")
-                            
-                            if "記事にあう" in text_content or "画像を選ぶ" in text_content:
-                                await button.click()
-                                select_clicked = True
-                                print(f"✅ 画像アイコンボタンクリック完了")
-                                break
-                except Exception as e:
-                    print(f"⚠️ 画像アイコンボタン検索エラー: {e}")
-            
             if not select_clicked:
                 print("❌ 「記事にあう画像を選ぶ」ボタンが見つかりません。スキップします。")
                 return
             
             await self.page.wait_for_timeout(2000)
             
-            # 3. モーダルが開くのを待機してから検索機能を探す
-            print("🔍 画像選択モーダルの読み込みを待機中...")
-            await self.page.wait_for_timeout(3000)
+            # 3. 🔍検索アイコンをクリックして検索入力欄を表示
+            print("🔍 検索アイコンをクリックして検索機能を開始...")
+            await self.page.wait_for_timeout(2000)
             
-            # まずページ上の全ての入力欄とボタンを調査
-            print("🔍 ページ上の要素を調査中...")
-            
-            # 検索アイコンまたは検索ボタンを探す
-            search_triggers = [
-                'svg[data-src="/icons/search.svg"]',
-                'button:has(svg[data-src="/icons/search.svg"])',
-                '[aria-label="検索"]',
-                'button[title*="検索"]',
-                '*[role="button"]:has-text("検索")'
+            search_icon_selectors = [
+                'svg path[d*="M14.71 14H15.5L20.49 19"]',  # 具体的なSVGパス
+                'button:has(svg path[d*="M14.71 14H15.5"])',  # SVGを含むボタン
+                'svg[role="img"]:has(path[fill-rule="evenodd"])',
+                '[aria-label*="検索"]',
+                'button svg path[fill-rule="evenodd"]'
             ]
             
-            search_triggered = False
-            for selector in search_triggers:
+            search_icon_clicked = False
+            for selector in search_icon_selectors:
                 try:
-                    elements = self.page.locator(selector)
-                    count = await elements.count()
-                    print(f"🔍 検索トリガー「{selector}」で見つかった要素数: {count}")
+                    search_icons = self.page.locator(selector)
+                    count = await search_icons.count()
+                    print(f"🔍 検索アイコン「{selector}」で見つかった要素数: {count}")
                     
                     if count > 0:
-                        element = elements.first
-                        if await element.is_visible():
-                            await element.click()
-                            search_triggered = True
-                            print(f"✅ 検索トリガークリック完了: {selector}")
+                        search_icon = search_icons.first
+                        if await search_icon.is_visible():
+                            await search_icon.click()
+                            search_icon_clicked = True
+                            print(f"✅ 検索アイコンクリック完了: {selector}")
                             break
-                        else:
-                            print(f"⚠️ 検索トリガー要素は存在するが見えません: {selector}")
-                            
                 except Exception as e:
-                    print(f"⚠️ 検索トリガー試行失敗: {selector} - {e}")
+                    print(f"⚠️ 検索アイコン試行失敗: {selector} - {e}")
                     continue
             
-            # 検索トリガーが見つからない場合は、直接検索入力欄を探す
-            if not search_triggered:
-                print("🔍 検索トリガーが見つからないため、直接検索入力欄を探します...")
+            if search_icon_clicked:
+                await self.page.wait_for_timeout(1500)
+                print("✅ 検索入力欄の表示を待機...")
             
-            await self.page.wait_for_timeout(1000)
-            
-            # 全ての入力欄を調査
-            print("🔍 利用可能な入力欄を調査中...")
-            all_inputs = self.page.locator('input')
-            input_count = await all_inputs.count()
-            print(f"🔍 見つかった入力欄の総数: {input_count}")
+            # 4. キーワードで画像検索
+            print(f"🔍 キーワード「{keyword}」で画像検索中...")
+            search_input_selectors = [
+                'input[placeholder="キーワード検索"]',
+                'input[aria-label*="みんなのフォトギャラリーから検索"]',
+                'input.sc-720f88eb-4.dACgdT',
+                'input[placeholder*="検索"]',
+                'input[type="text"]'
+            ]
             
             search_input_found = False
-            for i in range(input_count):
+            for selector in search_input_selectors:
                 try:
-                    input_element = all_inputs.nth(i)
-                    if await input_element.is_visible():
-                        # 入力欄の属性を調査
-                        input_type = await input_element.get_attribute('type')
-                        placeholder = await input_element.get_attribute('placeholder')
-                        aria_label = await input_element.get_attribute('aria-label')
-                        
-                        print(f"🔍 入力欄 {i+1}: type={input_type}, placeholder={placeholder}, aria-label={aria_label}")
-                        
-                        # テキスト入力欄で、検索に関連しそうなものを探す
-                        if input_type == 'text' or input_type is None:
-                            # この入力欄を試してみる
-                            await input_element.click()
-                            await self.page.wait_for_timeout(500)
-                            
-                            # キーワードを入力してみる
-                            keyword = self._extract_keyword_from_title(title)
-                            print(f"🔍 入力欄 {i+1} にキーワード「{keyword}」を入力します")
-                            
-                            await input_element.fill(keyword)
-                            await input_element.press('Enter')
-                            
-                            search_input_found = True
-                            print(f"✅ 検索キーワード入力完了（入力欄 {i+1}）")
-                            break
-                            
+                    search_input = self.page.locator(selector).first
+                    if await search_input.is_visible():
+                        await search_input.clear()
+                        await search_input.fill(keyword)
+                        await search_input.press('Enter')
+                        search_input_found = True
+                        print(f"✅ キーワード検索完了: {selector}")
+                        break
                 except Exception as e:
-                    print(f"⚠️ 入力欄 {i+1} での試行失敗: {e}")
+                    print(f"⚠️ 検索入力試行失敗: {selector} - {e}")
                     continue
             
             if not search_input_found:
                 print("⚠️ 検索入力欄が見つかりません。キーワードなしで画像選択を試行します。")
-                # キーワード検索なしで次のステップに進む
             
-            # 4. 画像が読み込まれるまで待機
+            # 5. 画像が読み込まれるまで待機
             print("🖼️ 画像の読み込みを待機中...")
-            await self.page.wait_for_timeout(4000)  # 画像読み込み待機時間を延長
+            await self.page.wait_for_timeout(4000)
             
-            # 5. 利用可能な画像を探して選択
+            # 6. 利用可能な画像を探して選択
             print("🖼️ 利用可能な画像を探します...")
             
-            # 様々なパターンで画像を探す
             image_selectors = [
-                'img[src*="assets.st-note.com"]',  # Note.comの画像
+                'img[src*="assets.st-note.com"]',
                 'img[src*="note.com"]',
                 'img.sc-a7ee00d5-4',
                 'img[width="400"]',
                 'img[alt*="画像"]',
-                'img'  # 最後の手段として全ての画像
+                'img'
             ]
             
             image_selected = False
@@ -676,22 +395,31 @@ class NoteAutoPoster:
                     print(f"🖼️ 「{selector}」で見つかった画像数: {count}")
                     
                     if count > 0:
-                        # 最初の数枚の画像を調査
-                        for i in range(min(count, 5)):  # 最大5枚まで調査
+                        # シンプルな画像選択
+                        best_image_index = await self._select_image_simple(images, keyword)
+                        
+                        try:
+                            image = images.nth(best_image_index)
+                            if await image.is_visible():
+                                src = await image.get_attribute('src')
+                                print(f"🖼️ 選択画像: {src}")
+                                
+                                await image.click()
+                                image_selected = True
+                                print(f"✅ 画像選択完了: {selector}")
+                                break
+                        except Exception as e:
+                            print(f"⚠️ 画像クリック失敗: {e}")
+                            # 超シンプルフォールバック: 最初の画像
                             try:
-                                image = images.nth(i)
-                                if await image.is_visible():
-                                    # 画像のsrcを確認
-                                    src = await image.get_attribute('src')
-                                    print(f"🖼️ 画像 {i+1}: {src}")
-                                    
-                                    # クリック可能かチェック
-                                    await image.click()
+                                first_image = images.first
+                                if await first_image.is_visible():
+                                    await first_image.click()
                                     image_selected = True
-                                    print(f"✅ 画像選択完了: {selector} (画像 {i+1})")
+                                    print(f"✅ フォールバック画像選択完了: {selector}")
                                     break
-                            except Exception as e:
-                                print(f"⚠️ 画像 {i+1} クリック失敗: {e}")
+                            except Exception as e2:
+                                print(f"⚠️ フォールバック画像クリック失敗: {e2}")
                                 continue
                         
                         if image_selected:
@@ -707,7 +435,7 @@ class NoteAutoPoster:
             
             await self.page.wait_for_timeout(2000)
             
-            # 6. 「この画像を挿入」ボタンをクリック
+            # 7. 「この画像を挿入」ボタンをクリック
             insert_button_selectors = [
                 'span:has-text("この画像を挿入")',
                 '#\\:rd\\:',
@@ -733,17 +461,17 @@ class NoteAutoPoster:
             
             await self.page.wait_for_timeout(2000)
             
-            # 7. 「保存」ボタンをクリック（画像クロップ画面の右下）
+            # 8. 「保存」ボタンをクリック
             print("💾 画像クロップ画面の保存ボタンをクリック中...")
             await self.page.wait_for_timeout(2000)
             
             save_button_selectors = [
-                'button:has-text("保存")',  # 最も一般的
+                'button:has-text("保存")',
                 'span:has-text("保存")',
-                '#\\:rj\\:',  # IDパターン
-                'button[class*="font-bold"]:has-text("保存")',  # クラスパターン
+                '#\\:rj\\:',
+                'button[class*="font-bold"]:has-text("保存")',
                 '[role="button"]:has-text("保存")',
-                'div:has-text("保存"):last-child'  # 最後の保存ボタン
+                'div:has-text("保存"):last-child'
             ]
             
             save_clicked = False
@@ -754,10 +482,8 @@ class NoteAutoPoster:
                     print(f"💾 「{selector}」で見つかった保存ボタン数: {count}")
                     
                     if count > 0:
-                        # 最後の（右下の）保存ボタンを選択
                         save_button = save_buttons.last
                         if await save_button.is_visible():
-                            # オーバーレイがある場合は少し待つ
                             await self.page.wait_for_timeout(1000)
                             await save_button.click()
                             save_clicked = True
@@ -773,10 +499,7 @@ class NoteAutoPoster:
             if save_clicked:
                 print("✅ アイキャッチ設定完了！")
                 print("⏳ 画像の読み込み完了を待機中...")
-                await self.page.wait_for_timeout(8000)  # 保存処理と画像読み込みの完了を待つ（延長）
-                
-                # 画像が正常に読み込まれたかチェック
-                await self._verify_eyecatch_loaded()
+                await self._wait_for_eyecatch_completion()
             else:
                 print("⚠️ 保存ボタンが見つかりませんでした")
                 
@@ -784,12 +507,181 @@ class NoteAutoPoster:
             print(f"⚠️ アイキャッチ設定エラー: {e}")
             print("📝 アイキャッチなしで投稿を続行します")
 
+    def _extract_keyword_simple(self, title, content):
+        """シンプルなキーワード抽出（Claude API不使用）"""
+        
+        # 方法1: タイトルから「【今日のキーワード：「xxx」】」部分を抽出
+        keyword_pattern = r'【今日のキーワード：「([^」]+)」】'
+        match = re.search(keyword_pattern, title)
+        if match:
+            keyword = match.group(1)
+            print(f"🎯 タイトルからキーワード抽出: 「{keyword}」")
+            return keyword
+        
+        # 方法2: blockquote内のキーワード解説から抽出
+        blockquote_pattern = r'> .*?「([^」]+)」.*?について'
+        match = re.search(blockquote_pattern, content)
+        if match:
+            keyword = match.group(1)
+            print(f"🎯 blockquoteからキーワード抽出: 「{keyword}」")
+            return keyword
+        
+        # 方法3: Note.com最適化キーワード（確実性重視）
+        note_keywords = [
+            'AI', 'AIツール', 'ツール', 'プロダクト', 'ビジネス', 'テクノロジー', 
+            'デザイン', 'イノベーション', 'スタートアップ', '自動化', '効率'
+        ]
+        
+        all_text = f"{title} {content}"
+        for keyword in note_keywords:
+            if keyword in all_text:
+                print(f"🎯 テキストマッチング: 「{keyword}」")
+                return keyword
+        
+        # 最終フォールバック
+        print("🎯 デフォルトキーワード使用: 「プロダクト」")
+        return "プロダクト"
+
+
+
+
+
+    async def _select_image_simple(self, images, keyword):
+        """シンプルな画像選択（ランダム + フォールバック）"""
+        try:
+            import random
+            
+            count = await images.count()
+            if count == 0:
+                return 0
+            
+            # 戦略1: ランダム選択（最初の5枚から）
+            # キーワード検索後の上位画像は品質が高いことが多い
+            max_choice = min(count, 5)
+            selected_index = random.randint(0, max_choice - 1)
+            
+            print(f"🎲 画像をランダム選択: {selected_index + 1}番目 / {count}枚中")
+            return selected_index
+            
+        except Exception as e:
+            print(f"⚠️ 画像選択エラー: {e}")
+            return 0  # フォールバック: 最初の画像
+
+
+
+    async def _wait_for_eyecatch_completion(self):
+        """アイキャッチ設定完了を確実に待機（最適化版）"""
+        try:
+            print("⏳ アイキャッチ設定完了を確実に待機中...")
+            
+            # まず十分な基本待機時間を設ける
+            print("⏳ 基本的な画像処理時間を待機中...")
+            await self.page.wait_for_timeout(5000)  # 2000ms → 5000ms に延長
+            
+            # アイキャッチ関連のモーダルが閉じるまで待機（試行回数を削減）
+            max_wait_attempts = 8  # 20回 → 8回に削減
+            wait_interval = 2000   # 1000ms → 2000ms に延長
+            
+            for attempt in range(max_wait_attempts):
+                try:
+                    modal_selectors = [
+                        '[role="dialog"]',
+                        '.modal',
+                        '.o-modal',
+                        ':has-text("画像を選ぶ")',
+                        ':has-text("この画像を挿入")',
+                        ':has-text("保存")',
+                        ':has-text("アイキャッチ")'
+                    ]
+                    
+                    modal_exists = False
+                    for selector in modal_selectors:
+                        try:
+                            modal_elements = self.page.locator(selector)
+                            count = await modal_elements.count()
+                            if count > 0:
+                                for i in range(count):
+                                    modal = modal_elements.nth(i)
+                                    if await modal.is_visible():
+                                        modal_exists = True
+                                        print(f"⏳ アイキャッチモーダルが残っています: {selector} (試行 {attempt + 1}/{max_wait_attempts})")
+                                        break
+                            if modal_exists:
+                                break
+                        except:
+                            continue
+                    
+                    if not modal_exists:
+                        print("✅ アイキャッチ関連のモーダルが閉じました")
+                        break
+                    
+                    # 待機間隔を延長
+                    await self.page.wait_for_timeout(wait_interval)
+                    
+                except Exception as e:
+                    print(f"⚠️ モーダル確認エラー (試行 {attempt + 1}): {e}")
+                    await self.page.wait_for_timeout(wait_interval)
+                    continue
+            
+            # 最終的な画像読み込み完了待機（延長）
+            print("⏳ 最終的な画像読み込み完了を待機中...")
+            await self.page.wait_for_timeout(8000)  # 5000ms → 8000ms に延長
+            
+            # アイキャッチ画像が実際に読み込まれたか確認
+            eyecatch_loaded = await self._verify_eyecatch_loaded()
+            
+            if eyecatch_loaded:
+                print("✅ アイキャッチ設定が完全に完了しました")
+            else:
+                print("⚠️ アイキャッチの読み込み確認はできませんが続行します")
+            
+            # 記事編集画面が正常に表示されているか確認
+            await self._verify_article_ready()
+            
+        except Exception as e:
+            print(f"⚠️ アイキャッチ完了待機エラー: {e}")
+            await self.page.wait_for_timeout(5000)  # エラー時も延長
+
+    async def _verify_article_ready(self):
+        """記事編集画面が投稿準備完了状態かを確認"""
+        try:
+            print("🔍 記事編集画面の状態を確認中...")
+            
+            ready_indicators = [
+                'textarea[placeholder="記事タイトル"]',
+                '.ProseMirror',
+                'span:has-text("公開に進む")',
+                'button:has-text("公開に進む")'
+            ]
+            
+            ready_count = 0
+            for selector in ready_indicators:
+                try:
+                    elements = self.page.locator(selector)
+                    count = await elements.count()
+                    if count > 0:
+                        element = elements.first
+                        if await element.is_visible():
+                            ready_count += 1
+                except:
+                    continue
+            
+            if ready_count >= 2:
+                print(f"✅ 記事編集画面準備完了 ({ready_count}/{len(ready_indicators)} 要素確認)")
+                return True
+            else:
+                print(f"⚠️ 記事編集画面の準備が不完全 ({ready_count}/{len(ready_indicators)} 要素確認)")
+                return False
+                
+        except Exception as e:
+            print(f"⚠️ 記事準備状態確認エラー: {e}")
+            return False
+
     async def _verify_eyecatch_loaded(self):
         """アイキャッチ画像の読み込み完了を確認"""
         try:
             print("🔍 アイキャッチ画像の読み込み状況を確認中...")
             
-            # アイキャッチ画像エリアが表示されているかチェック
             eyecatch_area_selectors = [
                 '.editor-eyecatch img',
                 '[data-testid="eyecatch-image"]',
@@ -805,7 +697,7 @@ class NoteAutoPoster:
                         print(f"✅ アイキャッチ画像が読み込まれました: {selector}")
                         return True
                 except Exception:
-                            continue
+                    continue
                     
             print("⚠️ アイキャッチ画像の読み込みが確認できませんが続行します")
             return False
@@ -814,39 +706,401 @@ class NoteAutoPoster:
             print(f"⚠️ アイキャッチ確認エラー: {e}")
             return False
 
-    def _extract_keyword_from_title(self, title):
-        """タイトルからメインキーワードを抽出"""
-        # 日本語の場合、スペースまたは句読点で分割
-        # 英語の場合、スペースで分割
-        keywords = re.split(r'[　\s、。！？\-－]+', title)
-        keywords = [k.strip() for k in keywords if k.strip() and len(k.strip()) > 1]
+    async def _close_search_dialog(self):
+        """検索ダイアログを閉じる（ログアウト時の検索ウィンドウ対策）"""
+        try:
+            print("🔍 検索ダイアログをチェック中...")
+            
+            # 検索関連のダイアログ・モーダルを検出
+            search_dialog_selectors = [
+                ':has-text("検索")',
+                ':has-text("キーワード検索")',
+                ':has-text("みんなのフォトギャラリーから検索")',
+                '[role="dialog"]:has-text("検索")',
+                '.modal:has-text("検索")',
+                '.o-modal:has-text("検索")',
+                'input[placeholder*="検索"]',
+                'input[placeholder="キーワード検索"]'
+            ]
+            
+            dialog_found = False
+            for selector in search_dialog_selectors:
+                try:
+                    dialogs = self.page.locator(selector)
+                    count = await dialogs.count()
+                    if count > 0:
+                        for i in range(count):
+                            dialog = dialogs.nth(i)
+                            if await dialog.is_visible():
+                                dialog_found = True
+                                print(f"🔍 検索ダイアログを発見: {selector}")
+                                break
+                        if dialog_found:
+                            break
+                except Exception:
+                    continue
+            
+            if not dialog_found:
+                print("✅ 検索ダイアログは見つかりませんでした")
+                return
+            
+            # 検索ダイアログを閉じる
+            print("🔍 検索ダイアログを閉じる試行中...")
+            
+            # 1. ESCキーで閉じる
+            try:
+                await self.page.keyboard.press('Escape')
+                await self.page.wait_for_timeout(1000)
+                print("✅ ESCキーで検索ダイアログを閉じました")
+                return
+            except Exception as e:
+                print(f"⚠️ ESCキーでの閉じる操作に失敗: {e}")
+            
+            # 2. 背景クリックで閉じる
+            try:
+                await self.page.click('body', position={'x': 100, 'y': 100})
+                await self.page.wait_for_timeout(1000)
+                print("✅ 背景クリックで検索ダイアログを閉じました")
+                return
+            except Exception as e:
+                print(f"⚠️ 背景クリックでの閉じる操作に失敗: {e}")
+            
+            # 3. 閉じるボタンを探してクリック
+            close_button_selectors = [
+                'button:has-text("閉じる")',
+                'span:has-text("閉じる")',
+                'button:has-text("×")',
+                'button:has-text("✕")',
+                '[aria-label="閉じる"]',
+                '[aria-label="Close"]',
+                'button[aria-label="Close"]'
+            ]
+            
+            for selector in close_button_selectors:
+                try:
+                    close_buttons = self.page.locator(selector)
+                    count = await close_buttons.count()
+                    if count > 0:
+                        close_button = close_buttons.first
+                        if await close_button.is_visible():
+                            await close_button.click()
+                            await self.page.wait_for_timeout(1000)
+                            print(f"✅ 閉じるボタンで検索ダイアログを閉じました: {selector}")
+                            return
+                except Exception:
+                    continue
+            
+            print("⚠️ 検索ダイアログを閉じることができませんでした")
+            
+        except Exception as e:
+            print(f"⚠️ 検索ダイアログ閉じる処理エラー: {e}")
+
+    async def _publish_with_retry(self):
+        """リトライ機能付き公開処理"""
+        max_retry = 3
         
-        if keywords:
-            # 最初の意味のある単語を返す
-            for keyword in keywords:
-                if len(keyword) >= 2:  # 2文字以上
-                    return keyword
-            return keywords[0]
-        else:
-            # フォールバック
-            return "記事"
+        for attempt in range(max_retry):
+            print(f"📢 公開処理試行 {attempt + 1}/{max_retry}")
+            
+            try:
+                current_url = self.page.url
+                print(f"🌐 公開前のURL: {current_url}")
+                
+                publish_success = await self._click_publish_button()
+                
+                if not publish_success:
+                    print(f"⚠️ 公開ボタンクリック失敗 (試行 {attempt + 1})")
+                    continue
+                
+                print("⏳ 公開処理を待機中...")
+                await self.page.wait_for_timeout(3000)
+                
+                error_handled = await self._handle_publish_error()
+                
+                if error_handled:
+                    print("⚠️ エラーが発生しました。リトライします...")
+                    print("⏳ アイキャッチ設定が完了するまで追加の待機時間を設けます...")
+                    await self.page.wait_for_timeout(5000)
+                    continue
+                
+                return await self._complete_publishing()
+                
+            except Exception as e:
+                print(f"⚠️ 公開処理エラー (試行 {attempt + 1}): {e}")
+                if attempt < max_retry - 1:
+                    print("⏳ エラー後の回復待機時間...")
+                    await self.page.wait_for_timeout(5000)
+                    continue
+                else:
+                    return False
+        
+        print("❌ 公開処理が最大リトライ回数に達しました")
+        return False
+
+    async def _click_publish_button(self):
+        """公開ボタンクリック処理"""
+        publish_button_selectors = [
+            'span:has-text("公開に進む")',
+            'button:has-text("公開に進む")',
+            'span:has-text("公開")',
+            'button:has-text("公開")',
+            '[data-testid="publish-button"]'
+        ]
+        
+        for selector in publish_button_selectors:
+            try:
+                publish_buttons = self.page.locator(selector)
+                count = await publish_buttons.count()
+                print(f"📢 「{selector}」で見つかった公開ボタン数: {count}")
+                
+                if count > 0:
+                    publish_button = publish_buttons.first
+                    if await publish_button.is_visible():
+                        await publish_button.click()
+                        print(f"✅ 公開ボタンクリック完了: {selector}")
+                        return True
+                    else:
+                        print(f"📢 公開ボタンは存在するが見えません: {selector}")
+                        
+            except Exception as e:
+                print(f"⚠️ 公開ボタン試行失敗: {selector} - {e}")
+                continue
+        
+        try:
+            await self.page.keyboard.press('Meta+Enter')
+            print("✅ キーボードショートカットで公開を試行")
+            return True
+        except:
+            print("❌ 公開処理に失敗しました")
+            return False
+
+    async def _handle_publish_error(self):
+        """公開エラーダイアログの処理（強化版）"""
+        try:
+            error_dialog_selectors = [
+                ':has-text("タイトル、本文を入力してください")',
+                ':has-text("入力してください")',
+                ':has-text("必須項目")',
+                ':has-text("エラー")',
+                ':has-text("読み込み")',
+                ':has-text("準備中")',
+                '.error-dialog',
+                '[role="dialog"]',
+                '.modal:has-text("エラー")',
+                '.o-modal:has-text("入力")',
+                '[role="alertdialog"]'
+            ]
+            
+            print("🔍 エラーダイアログを詳細チェック中...")
+            
+            for selector in error_dialog_selectors:
+                try:
+                    error_dialogs = self.page.locator(selector)
+                    count = await error_dialogs.count()
+                    
+                    if count > 0:
+                        print(f"🚨 エラーダイアログ候補発見: {selector} (数: {count})")
+                        
+                        for i in range(count):
+                            error_dialog = error_dialogs.nth(i)
+                            if await error_dialog.is_visible():
+                                print(f"🚨 エラーダイアログを確認: {selector} (要素 {i+1})")
+                                
+                                try:
+                                    error_text = await error_dialog.text_content()
+                                    print(f"🚨 エラー内容: {error_text[:100]}...")
+                                    
+                                    if any(pattern in error_text for pattern in [
+                                        "タイトル、本文を入力",
+                                        "入力してください",
+                                        "必須項目",
+                                        "読み込み中",
+                                        "準備中"
+                                    ]):
+                                        print("🚨 記事準備不完全エラーを検出")
+                                        
+                                        close_success = await self._close_error_dialog_enhanced()
+                                        
+                                        if close_success:
+                                            print("✅ エラーダイアログを閉じました")
+                                            await self.page.wait_for_timeout(3000)
+                                            return True
+                                        else:
+                                            print("⚠️ エラーダイアログを閉じることができませんでした")
+                                            return True
+                                except Exception as e:
+                                    print(f"⚠️ エラーテキスト取得失敗: {e}")
+                                
+                                return True
+                            
+                except Exception as e:
+                    print(f"⚠️ エラーダイアログ検出失敗: {selector} - {e}")
+                    continue
+            
+            print("✅ エラーダイアログは検出されませんでした")
+            return False
+            
+        except Exception as e:
+            print(f"⚠️ エラーハンドリング中にエラー: {e}")
+            return False
+
+    async def _close_error_dialog_enhanced(self):
+        """エラーダイアログの「閉じる」ボタンをクリック（強化版）"""
+        close_button_selectors = [
+            'button:has-text("閉じる")',
+            'span:has-text("閉じる")',
+            'button:has-text("OK")',
+            'span:has-text("OK")',
+            'button:has-text("了解")',
+            'span:has-text("了解")',
+            '[aria-label="閉じる"]',
+            '[aria-label="Close"]',
+            'button[aria-label="Close"]',
+            '.close-button',
+            'button:has-text("×")',
+            'button:has-text("✕")',
+            '[role="button"]:has-text("閉じる")',
+            'button[type="button"]',
+            '[role="dialog"] button',
+            '.modal button'
+        ]
+        
+        print("🔍 エラーダイアログの閉じるボタンを詳細検索中...")
+        
+        for selector in close_button_selectors:
+            try:
+                close_buttons = self.page.locator(selector)
+                count = await close_buttons.count()
+                
+                if count > 0:
+                    print(f"🔍 閉じるボタン候補: {selector} (数: {count})")
+                    
+                    for i in range(count):
+                        close_button = close_buttons.nth(i)
+                        if await close_button.is_visible():
+                            try:
+                                button_text = await close_button.text_content()
+                                print(f"🔍 ボタンテキスト: {button_text}")
+                            except:
+                                pass
+                            
+                            await close_button.click()
+                            print(f"✅ 閉じるボタンクリック完了: {selector} (ボタン {i+1})")
+                            await self.page.wait_for_timeout(1500)
+                            return True
+                    
+            except Exception as e:
+                print(f"⚠️ 閉じるボタン試行失敗: {selector} - {e}")
+                continue
+        
+        print("🔍 ESCキーでダイアログを閉じる試行...")
+        try:
+            await self.page.keyboard.press('Escape')
+            await self.page.wait_for_timeout(1000)
+            print("✅ ESCキーでダイアログを閉じました")
+            return True
+        except Exception as e:
+            print(f"⚠️ ESCキーでの閉じる操作に失敗: {e}")
+        
+        print("🔍 Enterキーでダイアログを閉じる試行...")
+        try:
+            await self.page.keyboard.press('Enter')
+            await self.page.wait_for_timeout(1000)
+            print("✅ Enterキーでダイアログを閉じました")
+            return True
+        except Exception as e:
+            print(f"⚠️ Enterキーでの閉じる操作に失敗: {e}")
+        
+        return False
+
+    async def _complete_publishing(self):
+        """投稿完了処理"""
+        try:
+            print("🔍 投稿状況を確認中...")
+            
+            updated_url = self.page.url
+            print(f"🌐 公開後のURL: {updated_url}")
+            
+            final_publish_selectors = [
+                'span:has-text("投稿する")',
+                'button:has-text("投稿する")',
+                'span:has-text("投稿")',
+                'button:has-text("投稿")',
+                '[data-testid="final-publish"]',
+                'button[type="submit"]'
+            ]
+            
+            final_publish_found = False
+            for selector in final_publish_selectors:
+                try:
+                    final_buttons = self.page.locator(selector)
+                    count = await final_buttons.count()
+                    print(f"📤 「{selector}」で見つかった最終投稿ボタン数: {count}")
+                    
+                    if count > 0:
+                        final_button = final_buttons.first
+                        if await final_button.is_visible():
+                            await final_button.click()
+                            final_publish_found = True
+                            print(f"✅ 最終投稿ボタンクリック完了: {selector}")
+                            await self.page.wait_for_timeout(3000)
+                            break
+                            
+                except Exception as e:
+                    print(f"⚠️ 最終投稿ボタン試行失敗: {selector} - {e}")
+                    continue
+            
+            if not final_publish_found:
+                print("💡 最終投稿ボタンが見つかりません。記事が既に投稿された可能性があります。")
+            
+            print("⏳ 投稿完了を最終確認中...")
+            await self.page.wait_for_timeout(5000)
+            
+            final_url = self.page.url
+            page_title = await self.page.title()
+            print(f"🌐 最終URL: {final_url}")
+            print(f"📄 最終ページタイトル: {page_title}")
+            
+            success_indicators = [
+                "note.com/masvc_" in final_url,
+                "publish" in final_url,
+                "/edit" not in final_url,
+                "投稿" in page_title,
+                "公開" in page_title
+            ]
+            
+            is_success = any(success_indicators)
+            
+            if is_success:
+                print("✅ 記事投稿完了！")
+            else:
+                print("✅ 投稿処理は完了しました（確認のため手動でチェックをお勧めします）")
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ 投稿完了処理エラー: {e}")
+            return False
 
     async def logout(self):
-        """ログアウト処理"""
+        """ログアウト処理（実際のHTML構造対応版）"""
         print("🚪 ログアウト開始...")
         
         try:
-            # まずプロフィールページに移動
             await self.page.goto("https://note.com/masvc_", wait_until="networkidle")
             await self.page.wait_for_timeout(2000)
             
-            # ユーザーメニューを開く
-            print("👤 ユーザーメニューを開きます...")
+            # ログアウト前に検索ダイアログをチェック・クローズ
+            await self._close_search_dialog()
+            
+            print("👤 ユーザーアイコンをクリックしてメニューを開きます...")
+            
+            # ユーザーメニューセレクタ（画像から確認済み）
             user_menu_selectors = [
-                'button.o-navbarPrimary__userIconButton',
-                'button[aria-controls="userMenu"]',
-                '.a-userIcon',
-                'img[alt="メニュー"]'
+                'img.a-userIcon.a-userIcon--medium[alt="メニュー"]',  # 実際の構造
+                'img[alt="メニュー"].a-userIcon',  # 順序変更版
+                'img[alt="メニュー"]',  # シンプル版
+                '.a-userIcon[alt="メニュー"]',  # クラス+属性
             ]
             
             menu_opened = False
@@ -857,6 +1111,7 @@ class NoteAutoPoster:
                         await menu_button.click()
                         menu_opened = True
                         print(f"✅ ユーザーメニューオープン: {selector}")
+                        await self.page.wait_for_timeout(2000)  # メニュー表示をしっかり待機
                         break
                 except Exception as e:
                     print(f"⚠️ メニューオープン試行失敗: {selector} - {e}")
@@ -864,61 +1119,120 @@ class NoteAutoPoster:
             
             if not menu_opened:
                 print("❌ ユーザーメニューが開けませんでした")
+                await self._debug_user_menu_detailed()
                 return False
             
-            await self.page.wait_for_timeout(1000)
+            # メニュー内容を詳細デバッグ
+            print("🔍 メニュー内容を詳細確認中...")
+            await self._debug_menu_items_detailed()
             
-            # ログアウトボタンをクリック
             print("🚪 ログアウトボタンをクリック中...")
+            
+            # 実際のHTML構造に基づく修正されたセレクタ
             logout_selectors = [
+                # 実際の構造に完全一致
+                'span.m-menuItem__title.svelte-1rhmcw0:has-text("ログアウト")',
+                
+                # svelte IDが変わる可能性を考慮したフォールバック
+                'span.m-menuItem__title[class*="svelte"]:has-text("ログアウト")',
+                'span.m-menuItem__title:has-text("ログアウト")',
+                
+                # より汎用的なセレクタ
                 'span:has-text("ログアウト")',
-                '.m-menuItem__title:has-text("ログアウト")',
-                'button:has-text("ログアウト")',
-                '[data-testid="logout"]',
-                'a:has-text("ログアウト")'
+                '*:has-text("ログアウト")',
+                
+                # XPath使用（最後の手段）
+                '//span[contains(@class, "m-menuItem__title") and text()="ログアウト"]',
+                '//span[text()="ログアウト"]',
+                '//*[text()="ログアウト"]'
             ]
             
             logout_clicked = False
             for selector in logout_selectors:
                 try:
-                    logout_element = self.page.locator(selector).first
-                    if await logout_element.is_visible():
-                        await logout_element.click()
-                        logout_clicked = True
-                        print(f"✅ ログアウトクリック完了: {selector}")
-                        break
+                    print(f"🔍 ログアウトセレクタ試行: {selector}")
+                    
+                    if selector.startswith('//'):
+                        # XPath使用
+                        logout_elements = self.page.locator(f'xpath={selector}')
+                    else:
+                        # CSS セレクタ使用
+                        logout_elements = self.page.locator(selector)
+                    
+                    count = await logout_elements.count()
+                    print(f"🔍 「{selector}」で見つかった要素数: {count}")
+                    
+                    if count > 0:
+                        for i in range(count):
+                            try:
+                                logout_element = logout_elements.nth(i)
+                                
+                                # 要素の詳細情報を表示
+                                if await logout_element.is_visible():
+                                    element_text = await logout_element.text_content()
+                                    element_class = await logout_element.get_attribute('class')
+                                    print(f"🔍 要素 {i+1}: text='{element_text}' class='{element_class}'")
+                                    
+                                    if element_text and 'ログアウト' in element_text:
+                                        print(f"🎯 ログアウト要素を発見: {selector} (要素 {i+1})")
+                                        await logout_element.click()
+                                        logout_clicked = True
+                                        print(f"✅ ログアウトクリック完了: {selector}")
+                                        break
+                                else:
+                                    print(f"⚠️ 要素 {i+1} は見えません")
+                                    
+                            except Exception as e:
+                                print(f"⚠️ 要素 {i+1} クリック失敗: {e}")
+                                continue
+                        
+                        if logout_clicked:
+                            break
+                            
                 except Exception as e:
                     print(f"⚠️ ログアウト試行失敗: {selector} - {e}")
                     continue
             
             if not logout_clicked:
                 print("❌ ログアウトボタンが見つかりません")
-                return False
-            
-            # ログアウト完了を待機
-            print("⏳ ログアウト処理完了を待機中...")
-            try:
-                await self.page.wait_for_navigation(wait_until='networkidle', timeout=10000)
-            except:
-                await self.page.wait_for_timeout(3000)
-            
-            final_url = self.page.url
-            print(f"🌐 ログアウト後のURL: {final_url}")
-            
-            if "login" in final_url or "note.com" in final_url:
-                print("✅ ログアウト成功！")
-                return True
-            else:
-                print("⚠️ ログアウトが完了したか不明です")
-                return False
                 
+                # 最終手段：キーボードナビゲーション
+                print("🔄 キーボードナビゲーションでログアウトを試行...")
+                success = await self._logout_with_keyboard()
+                if success:
+                    logout_clicked = True
+                else:
+                    await self._debug_all_menu_elements()
+                    return False
+            
+            if logout_clicked:
+                print("⏳ ログアウト処理完了を待機中...")
+                try:
+                    await self.page.wait_for_navigation(wait_until='networkidle', timeout=10000)
+                except:
+                    await self.page.wait_for_timeout(3000)
+                
+                final_url = self.page.url
+                print(f"🌐 ログアウト後のURL: {final_url}")
+                
+                # ログアウト成功判定
+                logout_success_indicators = [
+                    "login" in final_url,
+                    final_url == "https://note.com/",
+                    "note.com" in final_url and "masvc_" not in final_url
+                ]
+                
+                if any(logout_success_indicators):
+                    print("✅ ログアウト成功！")
+                    return True
+                else:
+                    print("⚠️ ログアウトが完了したか不明です")
+                    return False
+            
+            return False
+                    
         except Exception as e:
             print(f"❌ ログアウトエラー: {e}")
-            try:
-                await self.page.screenshot(path=f"logout_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
-                print("📸 ログアウトエラーのスクリーンショットを保存しました")
-            except:
-                pass
             return False
     
     async def get_article_content(self):
@@ -930,36 +1244,28 @@ class NoteAutoPoster:
             with open(article_file, 'r', encoding='utf-8') as f:
                 content = f.read()
             
-            # ファイルが空の場合
             if not content.strip():
                 return "犬のいる生活", "準備中"
             
-            # タイトル抽出と本文からタイトル行を除去
             lines = content.split('\n')
-            title = "犬のいる生活"  # デフォルトタイトル
+            title = "犬のいる生活"
             title_line_index = -1
             
-            # タイトル行を探す
             for i, line in enumerate(lines):
                 if line.startswith('# '):
-                    title = line[2:].strip()  # "# "を除去してタイトルを取得
+                    title = line[2:].strip()
                     title_line_index = i
                     break
             
-            # タイトル行を本文から除去
             if title_line_index >= 0:
-                # タイトル行を除去
                 lines.pop(title_line_index)
-                # タイトル行の後の空行も除去（もしあれば）
                 if title_line_index < len(lines) and lines[title_line_index].strip() == '':
                     lines.pop(title_line_index)
             
-            # 修正された本文を作成
             cleaned_content = '\n'.join(lines).strip()
             
             return title, cleaned_content
         else:
-            # ファイルが存在しない場合のデフォルト記事
             title = "犬のいる生活"
             content = "準備中"
             return title, content
@@ -969,12 +1275,140 @@ class NoteAutoPoster:
         if self.browser:
             await self.browser.close()
 
+    async def _debug_menu_items_detailed(self):
+        """メニュー項目の詳細デバッグ（実際のHTML構造確認）"""
+        try:
+            print("🔍 詳細デバッグ: メニュー項目の実際の構造を確認...")
+            
+            # メニュー項目の候補セレクタ
+            menu_selectors = [
+                'span.m-menuItem__title',
+                '.m-menuItem__title', 
+                'span[class*="menuItem"]',
+                'span[class*="title"]',
+                '[class*="menu"] span',
+                'div[class*="menu"] span'
+            ]
+            
+            for selector in menu_selectors:
+                try:
+                    elements = self.page.locator(selector)
+                    count = await elements.count()
+                    if count > 0:
+                        print(f"🔍 {selector}: {count}個の要素発見")
+                        
+                        for i in range(min(count, 10)):  # 最大10個まで表示
+                            element = elements.nth(i)
+                            if await element.is_visible():
+                                text = await element.text_content()
+                                class_attr = await element.get_attribute('class')
+                                print(f"  要素{i+1}: text='{text}' class='{class_attr}'")
+                                
+                                if text and 'ログアウト' in text:
+                                    print(f"  🎯 ログアウト要素発見！")
+                except Exception as e:
+                    print(f"⚠️ {selector} デバッグ失敗: {e}")
+                    
+        except Exception as e:
+            print(f"⚠️ 詳細デバッグ失敗: {e}")
+
+    async def _logout_with_keyboard(self):
+        """キーボードナビゲーションでログアウト"""
+        try:
+            print("⌨️ キーボードナビゲーションでログアウト試行...")
+            
+            # Tab キーでメニュー項目をナビゲート
+            for i in range(10):  # 最大10回Tab
+                await self.page.keyboard.press('Tab')
+                await self.page.wait_for_timeout(300)
+                
+                # 現在フォーカスされている要素をチェック
+                focused_element = await self.page.evaluate('document.activeElement.textContent')
+                if focused_element and 'ログアウト' in focused_element:
+                    print(f"🎯 ログアウト要素にフォーカス: '{focused_element}'")
+                    await self.page.keyboard.press('Enter')
+                    print("✅ キーボードでログアウト実行")
+                    return True
+            
+            print("⚠️ キーボードナビゲーションでもログアウトボタンが見つかりませんでした")
+            return False
+            
+        except Exception as e:
+            print(f"⚠️ キーボードナビゲーション失敗: {e}")
+            return False
+
+    async def _debug_all_menu_elements(self):
+        """すべてのメニュー要素を詳細分析"""
+        try:
+            print("🔍 全メニュー要素の緊急分析...")
+            
+            # ページ内の全テキスト要素をチェック
+            all_elements = self.page.locator('*:visible')
+            count = await all_elements.count()
+            print(f"🔍 見える要素総数: {count}")
+            
+            logout_candidates = []
+            for i in range(min(count, 200)):  # 最大200個まで確認
+                try:
+                    element = all_elements.nth(i)
+                    text = await element.text_content()
+                    if text and 'ログアウト' in text:
+                        tag_name = await element.evaluate('el => el.tagName')
+                        class_attr = await element.get_attribute('class')
+                        logout_candidates.append({
+                            'index': i,
+                            'tag': tag_name,
+                            'class': class_attr,
+                            'text': text
+                        })
+                except:
+                    continue
+            
+            print(f"🎯 ログアウト候補: {len(logout_candidates)}個発見")
+            for candidate in logout_candidates:
+                print(f"  候補: <{candidate['tag']}> class='{candidate['class']}' text='{candidate['text'][:50]}'")
+                
+        except Exception as e:
+            print(f"⚠️ 全要素分析失敗: {e}")
+
+    async def _debug_user_menu_detailed(self):
+        """ユーザーメニューの詳細デバッグ"""
+        try:
+            print("🔍 詳細デバッグ: ユーザーメニューボタンを確認...")
+            
+            # ユーザーアイコンの候補を詳細チェック
+            icon_selectors = [
+                'img[alt="メニュー"]',
+                'img.a-userIcon',
+                '[alt="メニュー"]',
+                'img[src*="profile_"]',
+                'img[src*="assets.st-note.com"]'
+            ]
+            
+            for selector in icon_selectors:
+                try:
+                    elements = self.page.locator(selector)
+                    count = await elements.count()
+                    if count > 0:
+                        print(f"🔍 {selector}: {count}個発見")
+                        for i in range(count):
+                            element = elements.nth(i)
+                            if await element.is_visible():
+                                src = await element.get_attribute('src')
+                                alt = await element.get_attribute('alt')
+                                class_attr = await element.get_attribute('class')
+                                print(f"  画像{i+1}: src='{src[:50]}...' alt='{alt}' class='{class_attr}'")
+                except Exception as e:
+                    print(f"⚠️ {selector} 確認失敗: {e}")
+                    
+        except Exception as e:
+            print(f"⚠️ ユーザーメニューデバッグ失敗: {e}")
+
 async def main():
     """メイン処理"""
     print("🚀 Note.com自動投稿システム開始")
     print("=" * 50)
     
-    # 環境変数チェック
     if not os.getenv('NOTE_EMAIL') or not os.getenv('NOTE_PASSWORD'):
         print("❌ 環境変数NOTE_EMAIL, NOTE_PASSWORDを設定してください")
         return
@@ -982,22 +1416,18 @@ async def main():
     poster = NoteAutoPoster()
     
     try:
-        # ブラウザセットアップ
-        is_headless = os.getenv('HEADLESS', 'false').lower() == 'true'
-        await poster.setup_browser(headless=is_headless)
+        # ヘッドレスモードで実行
+        await poster.setup_browser(headless=True)
         
-        # ログイン処理
         login_success = await poster.login()
         
         if not login_success:
             print("❌ ログインに失敗したため終了します")
             return
         
-        # 記事コンテンツ取得
         title, content = await poster.get_article_content()
         print(f"📄 記事準備完了: {title}")
         
-        # 記事作成・投稿
         publish_success = await poster.create_and_publish_article(title, content)
         
         if publish_success:
@@ -1005,7 +1435,6 @@ async def main():
         else:
             print("❌ 記事投稿に失敗しました")
         
-        # ログアウト処理
         logout_success = await poster.logout()
         
         if logout_success:
