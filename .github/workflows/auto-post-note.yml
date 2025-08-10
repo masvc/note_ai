@@ -4,7 +4,7 @@ name: 🚀 Note.com自動投稿システム
 on:
   schedule:
     # 中3日実行（月曜・木曜の朝8時JST）
-    - cron: "59 22 * * 0,3" # UTC 22:59 = JST 7:59 → JST 8:00
+    - cron: "59 22 * * 1,4" # UTC 22:59 = JST 7:59 → JST 8:00
   workflow_dispatch: # 手動実行も可能
 
 # 同時実行防止（コンフリクト対策）
@@ -100,7 +100,7 @@ jobs:
               git commit -m "Auto-generated article: ${TODAY}" \
                          -m "Title: ${TITLE}..." \
                          -m "Generated: $(TZ='Asia/Tokyo' date +'%Y-%m-%d %H:%M:%S JST')" \
-                         -m "Size: $(wc -c < "$ARTICLE_FILE") bytes"
+                         -m "Size: $(wc -c < '$ARTICLE_FILE') bytes"
               
               echo "✅ 記事をローカルにコミット完了"
             fi
