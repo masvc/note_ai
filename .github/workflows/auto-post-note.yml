@@ -1,31 +1,60 @@
 # .github/workflows/auto-post-note.yml
-name: Auto Post to Note.com
+name: 🚀 Note.com自動投稿システム
 
 on:
   schedule:
-    - cron: "0 9 * * *" # 毎日9時に実行
+    # 中3日実行（月曜・木曜の朝8時JST）
+    - cron: "59 22 * * 0,3" # UTC 22:59 = JST 7:59 → JST 8:00に実行
   workflow_dispatch: # 手動実行も可能
 
 jobs:
-  post:
+  auto-post-note:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v3
+      - name: 📥 チェックアウト
+        uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: 🐍 Python環境セットアップ
         uses: actions/setup-python@v4
         with:
           python-version: "3.11"
+          cache: "pip"
 
-      - name: Install dependencies
+      - name: 📦 依存関係インストール
         run: |
+          pip install --upgrade pip
           pip install -r requirements.txt
           playwright install chromium
 
-      - name: Run auto post script
+      - name: 📝 記事生成（Peaky Media RSS）
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          echo "🕐 $(TZ='Asia/Tokyo' date +'%Y-%m-%d %H:%M:%S JST') - 記事生成開始"
+          python create.py
+          echo "✅ 記事生成完了"
+
+      - name: ⏳ 生成完了待機
+        run: |
+          echo "📝 記事生成後の待機時間..."
+          sleep 30
+
+      - name: 🚀 Note.com自動投稿
         env:
           NOTE_EMAIL: ${{ secrets.NOTE_EMAIL }}
           NOTE_PASSWORD: ${{ secrets.NOTE_PASSWORD }}
-          HEADLESS: true # GitHub Actionsでは必ずヘッドレスモード
-        run: python main.py
+          HEADLESS: "true"
+        run: |
+          echo "🕐 $(TZ='Asia/Tokyo' date +'%Y-%m-%d %H:%M:%S JST') - 投稿開始"
+          python main.py
+          echo "✅ 投稿完了"
+
+      - name: 📸 エラー時のスクリーンショット保存
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-screenshots
+          path: "*.png"
+          retention-days: 3
