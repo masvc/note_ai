@@ -9,6 +9,7 @@ import os
 import asyncio
 import re
 import requests
+import glob
 from datetime import datetime
 from playwright.async_api import async_playwright
 from dotenv import load_dotenv
@@ -1247,7 +1248,6 @@ class NoteAutoPoster:
             timezone_info = "JST"
         except ImportError:
             # pytzが利用できない場合のフォールバック
-            import os
             # 環境変数TZが設定されている場合はそれを使用
             if os.getenv('TZ') == 'Asia/Tokyo':
                 # TZ環境変数が設定されていればdatetime.now()はJSTになる
@@ -1299,7 +1299,6 @@ class NoteAutoPoster:
             print("🔍 articles/ ディレクトリ内の最新ファイルを探します...")
             
             try:
-                import glob
                 md_files = glob.glob("articles/*.md")
                 if md_files:
                     # 最新のファイルを選択
