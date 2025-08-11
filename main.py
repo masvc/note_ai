@@ -1236,15 +1236,39 @@ class NoteAutoPoster:
             return False
     
     async def get_article_content(self):
-        """記事コンテンツ取得"""
-        today = datetime.now().strftime("%Y%m%d")
+        """記事コンテンツ取得（JST対応版）"""
+        # JST時間で日付を取得（create.pyと同期）
+        import pytz
+        from datetime import timedelta
+        
+        try:
+            jst = pytz.timezone('Asia/Tokyo')
+            today = datetime.now(jst).strftime("%Y%m%d")
+            timezone_info = "JST"
+        except ImportError:
+            # pytzが利用できない場合のフォールバック
+            import os
+            # 環境変数TZが設定されている場合はそれを使用
+            if os.getenv('TZ') == 'Asia/Tokyo':
+                # TZ環境変数が設定されていればdatetime.now()はJSTになる
+                today = datetime.now().strftime("%Y%m%d")
+                timezone_info = "JST(TZ env)"
+            else:
+                # フォールバック: UTC+9時間で計算
+                today = (datetime.now() + timedelta(hours=9)).strftime("%Y%m%d")
+                timezone_info = "JST(UTC+9)"
+        
         article_file = f"articles/{today}.md"
+        print(f"📁 記事ファイル検索: {article_file} ({timezone_info})")
         
         if os.path.exists(article_file):
             with open(article_file, 'r', encoding='utf-8') as f:
                 content = f.read()
             
+            print(f"✅ 記事ファイル発見: {article_file}")
+            
             if not content.strip():
+                print("⚠️ 記事ファイルが空です")
                 return "犬のいる生活", "準備中"
             
             lines = content.split('\n')
@@ -1264,8 +1288,52 @@ class NoteAutoPoster:
             
             cleaned_content = '\n'.join(lines).strip()
             
+            print(f"📄 記事タイトル: {title}")
+            print(f"📝 記事内容: {len(cleaned_content)}文字")
+            
             return title, cleaned_content
         else:
+            print(f"❌ 記事ファイルが見つかりません: {article_file}")
+            
+            # フォールバック: articles/ ディレクトリ内の最新ファイルを探す
+            print("🔍 articles/ ディレクトリ内の最新ファイルを探します...")
+            
+            try:
+                import glob
+                md_files = glob.glob("articles/*.md")
+                if md_files:
+                    # 最新のファイルを選択
+                    latest_file = max(md_files, key=os.path.getctime)
+                    print(f"📁 最新記事ファイルを発見: {latest_file}")
+                    
+                    with open(latest_file, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    
+                    if content.strip():
+                        lines = content.split('\n')
+                        title = "犬のいる生活"
+                        title_line_index = -1
+                        
+                        for i, line in enumerate(lines):
+                            if line.startswith('# '):
+                                title = line[2:].strip()
+                                title_line_index = i
+                                break
+                        
+                        if title_line_index >= 0:
+                            lines.pop(title_line_index)
+                            if title_line_index < len(lines) and lines[title_line_index].strip() == '':
+                                lines.pop(title_line_index)
+                        
+                        cleaned_content = '\n'.join(lines).strip()
+                        print(f"✅ フォールバック記事を使用: {latest_file}")
+                        return title, cleaned_content
+                
+            except Exception as e:
+                print(f"⚠️ フォールバック検索エラー: {e}")
+            
+            # 最終フォールバック
+            print("⚠️ デフォルト記事を使用します")
             title = "犬のいる生活"
             content = "準備中"
             return title, content
