@@ -839,8 +839,26 @@ https://peaky.co.jp/
         return article_content
     
     def save_article(self, content: str) -> str:
-        """記事をファイルに保存（クリーンアップ機能付き）"""
-        today = datetime.now().strftime("%Y%m%d")
+        """記事をファイルに保存（クリーンアップ機能付き・JST対応）"""
+        # JST時間で日付を取得（GitHub Actions UTC環境対応）
+        import pytz
+        try:
+            jst = pytz.timezone('Asia/Tokyo')
+            today = datetime.now(jst).strftime("%Y%m%d")
+            timezone_info = "JST"
+        except ImportError:
+            # pytzが利用できない場合のフォールバック
+            import os
+            # 環境変数TZが設定されている場合はそれを使用
+            if os.getenv('TZ') == 'Asia/Tokyo':
+                # TZ環境変数が設定されていればdatetime.now()はJSTになる
+                today = datetime.now().strftime("%Y%m%d")
+                timezone_info = "JST(TZ env)"
+            else:
+                # フォールバック: UTC+9時間で計算
+                today = (datetime.now() + timedelta(hours=9)).strftime("%Y%m%d")
+                timezone_info = "JST(UTC+9)"
+        
         filename = f"{today}.md"
         filepath = os.path.join(self.output_dir, filename)
         
@@ -851,7 +869,7 @@ https://peaky.co.jp/
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(cleaned_content)
             
-            print(f"✅ 記事を保存しました: {filepath}")
+            print(f"✅ 記事を保存しました: {filepath} ({timezone_info}: {today})")
             return filepath
             
         except Exception as e:

@@ -38,6 +38,7 @@ jobs:
       - name: 📝 記事生成（Peaky Media RSS）
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TZ: Asia/Tokyo # 👈 JST時間を強制設定（日付不整合対策）
         run: |
           echo "🕐 $(TZ='Asia/Tokyo' date +'%Y-%m-%d %H:%M:%S JST') - 記事生成開始"
           python create.py
