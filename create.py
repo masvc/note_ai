@@ -848,7 +848,6 @@ https://peaky.co.jp/
             timezone_info = "JST"
         except ImportError:
             # pytzが利用できない場合のフォールバック
-            import os
             # 環境変数TZが設定されている場合はそれを使用
             if os.getenv('TZ') == 'Asia/Tokyo':
                 # TZ環境変数が設定されていればdatetime.now()はJSTになる
